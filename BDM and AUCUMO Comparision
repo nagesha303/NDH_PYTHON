@@ -1,0 +1,174 @@
+import psycopg2
+import pandas as pd
+import s3fs
+import pyarrow.parquet as pq
+import sys
+import pandas.io.sql as psql
+import collections
+import os
+
+'''
+Function to extract data from curation bucket
+'''
+
+def data_from_curated(entity):
+		fs=s3fs.S3FileSystem()
+		dataset=pq.ParquetDataset(CURATED_BUCKET_PATH, filesystem = fs)
+		df=dataset.read()
+		df=df.to_pandas()
+		return df
+		
+'''
+Function to get count
+'''
+
+def get_dataframe_count(dataframe):
+ k=len(dataframe)
+ return k
+ 
+#COMPARE TWO DATAFRAMES FUNCTION
+def compare(df1,df2):
+	df=pd.concat([df1,df2])
+	df=df.reset_index(drop=True)
+	df_gpby=df.groupby(list(df.columns))
+	idx = [x[0] for x in df_gpby.groups.values() if len(x)==1]
+	df.reindex(idx)
+	df_diff=pd.concat([df1,df2]).drop_duplicates(keep=False)
+	return df_diff
+	
+def check(entity):
+ 
+ try:
+  print("\n")
+  print("**********************************************")
+  print("\n Validations for ",entity,"\n")
+  print("**********************************************")
+  
+  #OLD_CURATED_BUCKET_PATH = f"s3://ndhnonprod-sit03-curated-nab/AFS/CO0029/SYD/DATA/{old_date}/{entity}/FULL"
+  #NEW_CURATED_BUCKET_PATH = f"s3://ndhnonprod-sit03-curated-nab/AFS/CO0029/SYD/DATA/{new_date}/{entity}/FULL"
+ 
+  print("\nComparing between below curated paths\n")
+  print("OLD / BDM Curated Path : ",OLD_CURATED_BUCKET_PATH)
+  print("NEW / AUCUMO Curated Path : ",NEW_CURATED_BUCKET_PATH)
+  print("\n")
+  
+  OLD_CURATION_NUMBER_OF_REC = get_dataframe_count(data_from_curated(OLD_CURATED_BUCKET_PATH))
+  NEW_CURATION_NUMBER_OF_REC = get_dataframe_count(data_from_curated(NEW_CURATED_BUCKET_PATH))
+  
+  print("Number of recordds in OLD Curated file :",OLD_CURATION_NUMBER_OF_REC)
+  print("Number of recordds in NEW Curated file :",NEW_CURATION_NUMBER_OF_REC)
+  
+  if(OLD_CURATION_NUMBER_OF_REC==NEW_CURATION_NUMBER_OF_REC):
+   print("**********************************************")
+   print("Count matches between old and new curation buckets")
+   print("**********************************************")
+  else:
+   print("**********************************************")
+   print("Count doesn't match")
+   print("**********************************************")
+   
+  Old_col = data_from_curated(OLD_CURATED_BUCKET_PATH).columns
+  New_col = data_from_curated(NEW_CURATED_BUCKET_PATH).columns
+  
+  print("\nBelow are the columns in Old curation bucket :\n")
+  print(Old_col.to_list())
+  print("\nBelow are the columns in New curation bucket :\n")
+  print(New_col.to_list())
+  
+  Old_col_set = set(Old_col)
+  New_col_set = set(New_col)
+  
+  Common_columns = list(Old_col_set.intersection(New_col_set))
+  
+  Missing_in_old_columns = list(New_col_set-Old_col_set)
+  Missing_in_new_columns = list(Old_col_set-New_col_set)
+  
+  print("Below are the columns matching in OLD and NEW Curation buckets :\n")
+  print(Common_columns)
+  print("\n")
+  
+  if not Missing_in_old_columns and Missing_in_new_columns:
+   print("**********************************************")
+   print("\n All Columns match in old and new curaated files\n")
+   ("**********************************************")
+   
+  else:
+   print("**********************************************")
+   print("\n Some Columns dont match in old and new curaated files\n")
+   ("***************************************************")
+   print("Below are the columns present in Old Curation bucket but missing in New Curation bucket :\n")
+   print(Missing_in_new_columns)
+   print("\n")
+   print("Below are the columns present in New Curation bucket but missing in Old Curation bucket :\n")
+   print(Missing_in_old_columns)
+   print("\n")
+   
+   old_data = data_from_curated(OLD_CURATED_BUCKET_PATH)
+   new_data = data_from_curated(NEW_CURATED_BUCKET_PATH)
+   
+   audit_cols_old_bucket = ['integration_audit_id','src_proc_dt','src_eff_dt','Log_id']
+   audit_cols_new_bucket = ['integration_audit_id','src_proc_dt','src_eff_dt','Log_id']
+   
+   old_data_without_audit_cols = old_data.drop(columns=audit_cols_old_bucket)
+   new_data_without_audit_cols = new_data.drop(columns=audit_cols_new_bucket)
+   
+   comp=compare(old_data_without_audit_cols,new_data_without_audit_cols)
+   
+   print("**********************************************")
+   print("\ncOMPARING OLD AND new curation buckets after removing audit columns\n")
+   ("***************************************************")
+   
+   print("\nBelow is data of first record in OLD Curation bucket\n")
+   
+   print(old_data_without_audit_cols.iloc[0].to_frame().T)
+   
+   print("\nBelow is data of first record in NEW Curation bucket\n")
+   
+   print(new_data_without_audit_cols.iloc[0].to_frame().T)
+   
+   if(comp.empty):
+    print("**********************************************")
+    print("\nData in both curation buckets match\n")
+    ("***************************************************")
+   else:
+    print("**********************************************")
+    print("\nData in both curation buckets dont match. Pleaase check.\n")
+    ("***************************************************")
+	
+ except Exception as e:
+  print("**********************************************")
+  print("\nERROR OCCURED\n")
+  print(e)
+  print("**********************************************")
+  
+sources = {
+'CO0029':
+{
+'entities':['DOCUMENT_GENERATE','DOCUMENT_LINKAGE','DOCUMENT_METADATA'],
+'OLD_CURAATED_BUCKET':'s3://ndhnonprod-sit03-curated-nab/AFS/CO0029/SYD/DATA/',
+'NEW_CURATED_BUCKET':'s3://ndhnonprod-sit03-curated-nab/AFS/CO0029/SYD/DATA/'
+},
+
+'WH1280':
+{
+'entities':['BDPF','BEPF'],
+'OLD_CURAATED_BUCKET':'s3://ndhnonprod-sit03-curated-nab/AFS/WH1280/DATA/',
+'NEW_CURATED_BUCKET':'s3://ndhnonprod-sit03-curated-nab/AFS/WH1280/DATA/'
+}
+
+}
+
+selected_source=input("Select source to test :")
+print("\nTesting for source : ",selected_source)
+
+entities=sources[selecteed_source]['entities']
+print("\bBelow are the entities in the source\n",entities)
+
+old_date = input("\nEnter BDM Curated Date in YYYY/MM/DD Format :")
+new_date = input("\nEnter AUCUMO Curated Date in YYYY/MM/DD Format :")
+
+for entity in entities:
+ OLD_CURATED_BUCKET_PATH = str(sources[seleccted_source]['OLD_CURAATED_BUCKET']+f"{old_date}/{entity}/FULL"
+ NEW_CURATED_BUCKET_PATH = str(sources[seleccted_source]['OLD_CURAATED_BUCKET']+f"{old_date}/{entity}/FULL"
+ check(entity)
+ 
